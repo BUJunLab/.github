@@ -1,0 +1,77 @@
+name: Reusable Release Tagger
+
+on:
+  workflow_call:
+    inputs:
+      arxiv_id:
+        type: string
+        required: false
+        default: ''
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch arXiv metadata
+        if: ${{ inputs.arxiv_id != '' }}
+        id: arxiv
+        run: |
+          ARXIV_ID="${{ inputs.arxiv_id }}"
+          RESPONSE=$(curl -s "https://export.arxiv.org/abs/${ARXIV_ID}")
+
+          TITLE=$(echo "$RESPONSE" | grep -oP '(?<=<title>).*?(?=</title>)' | head -1 | sed 's/\[.*\] //')
+          AUTHORS=$(echo "$RESPONSE" | grep -oP '(?<=<div class="authors">).*?(?=</div>)' | sed 's/<[^>]*>//g' | head -1)
+
+          echo "title=${TITLE}" >> $GITHUB_OUTPUT
+          echo "authors=${AUTHORS}" >> $GITHUB_OUTPUT
+          echo "url=https://arxiv.org/abs/${ARXIV_ID}" >> $GITHUB_OUTPUT
+
+      - name: Generate release body   
+        run: |
+          REPO="${{ github.repository }}"
+          TAG="${{ github.ref_name }}"
+          ARXIV_ID="${{ inputs.arxiv_id }}"
+          TITLE="${{ steps.arxiv.outputs.title }}"
+          AUTHORS="${{ steps.arxiv.outputs.authors }}"
+          URL="${{ steps.arxiv.outputs.url }}"
+          REPO_NAME="${{ github.event.repository.name }}"
+
+          {
+            echo "## 📦 ${REPO} — ${TAG}"
+            echo ""
+
+            if [ -n "$ARXIV_ID" ]; then
+              echo "## 📄 Paper"
+              echo "**${TITLE}**"
+              echo "${AUTHORS}"
+              echo "🔗 ${URL}"
+              echo ""
+            fi
+
+            echo "## 🔬 Citation"
+            echo '```bibtex' 
+            echo "@misc{${REPO_NAME}_${TAG},"
+            echo "  title  = {${TITLE:-$REPO_NAME}},"
+            echo "  author = {${AUTHORS:-Jun Lab, Boston University}},"
+            echo "  year   = {2025},"
+            echo "  url    = {https://github.com/${REPO}}"
+
+            if [ -n "$ARXIV_ID" ]; then
+              echo "  eprint        = {${ARXIV_ID}},"
+              echo "  archivePrefix = {arXiv},"
+            fi
+
+            echo "}"
+            echo '```'
+          } > release_body.md        
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          body_path: release_body.md 
